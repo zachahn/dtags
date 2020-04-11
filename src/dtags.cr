@@ -53,11 +53,11 @@ module Dtags
     end
 
     private def combine(all_paths_and_exit_codes, output_path, tmp_path)
-      paths_and_exit_codes = all_paths_and_exit_codes.select do |input_path, exit_code|
+      paths_and_exit_codes = all_paths_and_exit_codes.select do |_input_path, exit_code|
         exit_code == 0
       end
 
-      new_lines = paths_and_exit_codes.flat_map do |input_path, exit_code|
+      new_lines = paths_and_exit_codes.flat_map do |input_path, _exit_code|
         next [] of String if !File.exists?(input_path)
 
         contents = File.read(input_path)
@@ -129,7 +129,7 @@ module Dtags
         @runners = {} of String => Runner
         @raw_configs = gather_raw_configs
 
-        @raw_configs.each do |path, contents|
+        @raw_configs.each do |_path, contents|
           next if contents.nil?
 
           config_delegatees = contents["delegate"]?.try(&.as_a?)
@@ -144,7 +144,6 @@ module Dtags
 
           runners.each do |name, runner|
             name = name.as_s?
-            runner_command = runner.try(&.as_h?)
 
             next if name.nil?
             next if runner.nil?
