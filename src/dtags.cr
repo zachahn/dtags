@@ -5,21 +5,42 @@ require "yaml"
 module Dtags
   VERSION = "0.0.0"
 
-  class Runner
-    getter command
+  alias ArgInterpolation = NamedTuple(abspath: String)
 
+  class Runner
     def initialize(@command : Array(String))
+    end
+
+    def call(
+      channel : Channel(Tuple(String, Tuple(Path, Int32))),
+      name : String,
+      abspath : Path,
+      args_interpolation : ArgInterpolation
+    )
+      cmd = @command.first
+      args = @command[1..-1].map do |arg|
+        arg % args_interpolation
+      end
+
+      status = Process.run(cmd, args)
+      channel.send({name, {abspath, status.exit_code}})
+    rescue
+      if File.exists?(abspath)
+        File.delete(abspath)
+      end
+
+      channel.send({name, {abspath, -1}})
     end
   end
 
   class Main
-    def call(environment)
+    def call(environment : Environment)
       pid = Process.pid
-      prefix = ".dtags-#{pid}"
+      prefix_path = "#{environment.working_path}-#{pid}"
 
       paths_and_exit_codes =
-        run_runners(environment.delegatees, environment.runners, prefix)
-      combine(paths_and_exit_codes, Path["tags"].expand, prefix)
+        run_runners(environment.delegatees, environment.runners, prefix_path)
+      combine(paths_and_exit_codes, environment.result_path, prefix_path)
       clean(paths_and_exit_codes)
     end
 
@@ -37,6 +58,8 @@ module Dtags
       end
 
       new_lines = paths_and_exit_codes.flat_map do |input_path, exit_code|
+        next [] of String if !File.exists?(input_path)
+
         contents = File.read(input_path)
         contents.lines.reject { |line| line[/^!_TAG_/]? }
       end
@@ -52,12 +75,11 @@ module Dtags
       ]
 
       File.write(tmp_path, (headers + new_lines.sort).join("\n") + "\n")
-      File.rename(tmp_path, "tags")
+      File.rename(tmp_path, output_path.to_s)
     end
 
     private def run_runners(delegatees, runners, prefix) : Array(Tuple(Path, Int32))
       channel = Channel(Tuple(String, Tuple(Path, Int32))).new
-      pid = Process.pid
 
       existing_delegatees = delegatees.compact_map do |delegatee|
         next delegatee if runners.has_key?(delegatee)
@@ -69,15 +91,11 @@ module Dtags
         runner = runners[delegatee]
 
         spawn do
-          relpath = "#{prefix}-#{pid}-#{i}"
+          relpath = "#{prefix}-#{i}"
           abspath = Path[relpath].expand
-          command = runner.command.first
-          args = runner.command[1..-1].map do |arg|
-            arg % { relpath: relpath, abspath: abspath.to_s }
-          end
+          args_interpolation = { abspath: abspath.to_s }
 
-          status = Process.run(command, args)
-          channel.send({delegatee, {abspath, status.exit_code}})
+          runner.call(channel, delegatee, abspath, args_interpolation)
         end
       end
 
@@ -88,86 +106,94 @@ module Dtags
     end
   end
 
-  class Environment
-    @raw_configs : Array(Tuple(Path, YAML::Any | Nil))
+  abstract class Environment
+    abstract def runners : Hash(String, Runner)
+    abstract def delegatees : Array(String)
+    abstract def working_path : Path
+    abstract def result_path : Path
 
-    getter runners
+    class FromFile < Environment
+      @raw_configs : Array(Tuple(Path, YAML::Any | Nil))
 
-    def initialize(@config_search_paths : Array(Path), @cli_delegatees : Array(String))
-      @config_delegatees = [] of String
-      @runners = {} of String => Runner
-      @raw_configs = gather_raw_configs
+      getter runners : Hash(String, Runner)
+      getter working_path : Path
+      getter result_path : Path
 
-      @raw_configs.each do |path, contents|
-        next if contents.nil?
+      def initialize(
+        @config_search_paths : Array(Path),
+        @cli_delegatees : Array(String),
+        @working_path : Path,
+        @result_path : Path
+      )
+        @config_delegatees = [] of String
+        @runners = {} of String => Runner
+        @raw_configs = gather_raw_configs
 
-        config_delegatees = contents["delegate"]?.try(&.as_a?)
-        if config_delegatees
-          config_delegatees = config_delegatees.compact_map { |delegatee| delegatee.as_s? }
-          @config_delegatees.concat(config_delegatees)
-        end
+        @raw_configs.each do |path, contents|
+          next if contents.nil?
 
-        runners = contents["runners"]?.try(&.as_h?)
-
-        next if runners.nil?
-
-        runners.each do |name, runner|
-          name = name.as_s?
-          runner_command = runner.try(&.as_h?)
-
-          next if name.nil?
-          next if runner.nil?
-
-          runner_command = runner["command"]?.try(&.as_a?)
-          next if runner_command.nil?
-
-          runner_command = runner_command.map do |part|
-            part.as_s?
+          config_delegatees = contents["delegate"]?.try(&.as_a?)
+          if config_delegatees
+            config_delegatees = config_delegatees.compact_map { |delegatee| delegatee.as_s? }
+            @config_delegatees.concat(config_delegatees)
           end
 
-          next if runner_command.any? { |part| part.is_a?(Nil) }
+          runners = contents["runners"]?.try(&.as_h?)
 
-          # TODO: Warn when there are multiple runners of the same name
-          @runners[name] = Runner.new(runner_command.compact)
+          next if runners.nil?
+
+          runners.each do |name, runner|
+            name = name.as_s?
+            runner_command = runner.try(&.as_h?)
+
+            next if name.nil?
+            next if runner.nil?
+
+            runner_command = runner["command"]?.try(&.as_a?)
+            next if runner_command.nil?
+
+            runner_command = runner_command.map do |part|
+              part.as_s?
+            end
+
+            next if runner_command.any? { |part| part.is_a?(Nil) }
+
+            if @runners.has_key?(name)
+              puts "Runner already defined. Overriding: #{name}"
+            end
+
+            @runners[name] = Runner.new(runner_command.compact)
+          end
         end
       end
-    end
 
-    def output_paths
-      {
-        abspath: Path["ctags"].expand,
-        relpath: "ctags"
-      }
-    end
-
-    def delegatees
-      if @cli_delegatees.empty?
-        return @config_delegatees
-      end
-
-      @cli_delegatees
-    end
-
-    private def gather_raw_configs
-      @config_search_paths.map do |path|
-        if !File.file?(path)
-          next {path, nil}
+      def delegatees : Array(String)
+        if @cli_delegatees.empty?
+          return @config_delegatees
         end
 
-        contents = File.open(path) { |file| YAML.parse(file) }
+        @cli_delegatees
+      end
 
-        {path, contents}
+      private def gather_raw_configs
+        @config_search_paths.map do |path|
+          if !File.file?(path)
+            next {path, nil}
+          end
+
+          contents = File.open(path) { |file| YAML.parse(file) }
+
+          {path, contents}
+        end
       end
     end
   end
 
   class Cli
-    property config_search_paths : Array(Path)
-    getter exit_code : Int32
-    getter? quit : Bool
-    getter? help : Bool
-
+    @config_search_paths : Array(Path)
     @parser : OptionParser
+    @result_path : Path
+    @working_path : Path
 
     def initialize
       @config_search_paths = [
@@ -176,17 +202,21 @@ module Dtags
         Path.new(ENV.fetch("XDG_CONFIG_HOME", Path.home.join("config", "dtags", "dtags.yaml").to_s)).expand,
         Path.home.join(".dtags.yaml"),
       ]
-      @quit = false
-      @help = false
-      @exit_code = 0
       @delegatees = [] of String
+      @result_path = Path["."].expand.join("tags").normalize
+      @working_path = Path["."].expand.join(".dtags").normalize
       @parser = initialize_parser
     end
 
     def parse(argv)
       @parser.parse(argv)
 
-      Environment.new(config_search_paths: @config_search_paths, cli_delegatees: @delegatees)
+      Environment::FromFile.new(
+        config_search_paths: @config_search_paths,
+        cli_delegatees: @delegatees,
+        working_path: @working_path,
+        result_path: @result_path
+      )
     end
 
     private def initialize_parser : OptionParser
@@ -194,16 +224,22 @@ module Dtags
         parser.banner = "Usage: dtags [options]"
         parser.separator
         parser.separator("Options:")
-        parser.on("--clear-config-paths", "Empties the list of search paths") do
+        parser.on("--clear-config-paths", "Empties the list of search paths. Should be called before `--config`") do
           @config_search_paths = [] of Path
         end
         parser.on("--config=FILE", "Prepend config search path") do |path|
           @config_search_paths.unshift(Path.new(path).expand)
         end
-        parser.on("--delegatee=DELEGATEE", "Specify delegatee. Overrides delegatees specified in config file") do |delegatee|
+        parser.on("--delegatee=DELEGATEE", "Name of runner to run. Overrides delegatees specified in config file") do |delegatee|
           @delegatees.push(delegatee)
         end
-        parser.on("--version", "Prints the following: v#{Dtags::VERSION}") do
+        parser.on("-o RESULT", "--out=RESULT", "Path to the final file") do |path|
+          @result_path = Path[path].expand.normalize
+        end
+        parser.on("--working=PREFIX", "Path to intermediary tags") do |working_path|
+          @working_path = Path[working_path].expand.normalize
+        end
+        parser.on("--version", "Print the following and quit: v#{Dtags::VERSION}") do
           puts("v#{Dtags::VERSION}")
           exit
         end
@@ -211,8 +247,17 @@ module Dtags
           puts(parser)
           exit
         end
+        parser.separator
+        parser.separator(<<-MORE)
+        Defaults: (compensating for the current working directory)
+        #{@config_search_paths.map { |path| "    --config=#{path}" }.join("\n")}
+            --out=#{@result_path}
+            --working=#{@working_path}
+        MORE
+
         parser.invalid_option do |flag|
           STDOUT.puts("ERROR: #{flag} is not a valid option.")
+          STDOUT.puts(parser)
           exit(1)
         end
       end
