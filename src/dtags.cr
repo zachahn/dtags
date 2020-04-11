@@ -14,24 +14,24 @@ module Dtags
 
   class Main
     def call(environment)
-      delegatees = environment.delegatees
+      pid = Process.pid
+      prefix = ".dtags-#{pid}"
 
-      runners = delegatees.compact_map do |delegatee|
-        runner = environment.runners[delegatee]?
-
-        if runner.nil?
-          puts "Couldn't find a runner named: #{delegatee}"
-        end
-
-        runner
-      end
-
-      paths_and_exit_codes = run_runners(runners)
-      combine(paths_and_exit_codes, Path["tags"].expand)
-      # TODO: ensure clean
+      paths_and_exit_codes =
+        run_runners(environment.delegatees, environment.runners, prefix)
+      combine(paths_and_exit_codes, Path["tags"].expand, prefix)
+      clean(paths_and_exit_codes)
     end
 
-    private def combine(all_paths_and_exit_codes, output_path)
+    private def clean(paths_and_exit_codes)
+      paths_and_exit_codes.each do |path, _exit_code|
+        if File.exists?(path)
+          File.delete(path)
+        end
+      end
+    end
+
+    private def combine(all_paths_and_exit_codes, output_path, tmp_path)
       paths_and_exit_codes = all_paths_and_exit_codes.select do |input_path, exit_code|
         exit_code == 0
       end
@@ -41,20 +41,35 @@ module Dtags
         contents.lines.reject { |line| line[/^!_TAG_/]? }
       end
 
-      pid = Process.pid
-      tmp_path = ".dtags-#{pid}"
-      # TODO: http://ctags.sourceforge.net/FORMAT
-      File.write(tmp_path, new_lines.join("\n") + "\n")
+      # TODO: Ensure _TAG_FILE_FORMAT is consistent from all delegated outputs
+      headers = [
+        %(!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append \";\" to lines/),
+        %(!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/),
+        %(!_TAG_PROGRAM_AUTHOR	Zach Ahn	//),
+        %(!_TAG_PROGRAM_NAME	dtags	/Delegate Ctags/),
+        %(!_TAG_PROGRAM_URL	https://github.com/zachahn/dtags/	//),
+        %(!_TAG_PROGRAM_VERSION	#{Dtags::VERSION}	//),
+      ]
+
+      File.write(tmp_path, (headers + new_lines.sort).join("\n") + "\n")
       File.rename(tmp_path, "tags")
     end
 
-    private def run_runners(runners) : Array(Tuple(Path, Int32))
-      channel = Channel(Tuple(Path, Int32)).new
+    private def run_runners(delegatees, runners, prefix) : Array(Tuple(Path, Int32))
+      channel = Channel(Tuple(String, Tuple(Path, Int32))).new
       pid = Process.pid
 
-      runners.each_with_index do |runner, i|
+      existing_delegatees = delegatees.compact_map do |delegatee|
+        next delegatee if runners.has_key?(delegatee)
+
+        puts "Couldn't find a runner named: #{delegatee}"
+      end
+
+      existing_delegatees.each_with_index do |delegatee, i|
+        runner = runners[delegatee]
+
         spawn do
-          relpath = ".dtags-#{pid}-#{i}"
+          relpath = "#{prefix}-#{pid}-#{i}"
           abspath = Path[relpath].expand
           command = runner.command.first
           args = runner.command[1..-1].map do |arg|
@@ -62,11 +77,14 @@ module Dtags
           end
 
           status = Process.run(command, args)
-          channel.send({abspath, status.exit_code})
+          channel.send({delegatee, {abspath, status.exit_code}})
         end
       end
 
-      runners.size.times.map { channel.receive }.to_a
+      results = existing_delegatees.size.times.map { channel.receive }.to_h
+
+      # sort results
+      existing_delegatees.map { |delegatee| results[delegatee] }
     end
   end
 
@@ -74,8 +92,6 @@ module Dtags
     @raw_configs : Array(Tuple(Path, YAML::Any | Nil))
 
     getter runners
-    getter cli_delegatees
-    getter config_delegatees
 
     def initialize(@config_search_paths : Array(Path), @cli_delegatees : Array(String))
       @config_delegatees = [] of String
@@ -111,7 +127,6 @@ module Dtags
 
           next if runner_command.any? { |part| part.is_a?(Nil) }
 
-          # TODO: Require that command is an array of strings
           # TODO: Warn when there are multiple runners of the same name
           @runners[name] = Runner.new(runner_command.compact)
         end
@@ -126,11 +141,11 @@ module Dtags
     end
 
     def delegatees
-      if cli_delegatees.empty?
-        return config_delegatees
+      if @cli_delegatees.empty?
+        return @config_delegatees
       end
 
-      cli_delegatees
+      @cli_delegatees
     end
 
     private def gather_raw_configs
@@ -209,5 +224,3 @@ cli = Dtags::Cli.new
 environment = cli.parse(ARGV.dup)
 
 Dtags::Main.new.call(environment)
-
-# pp! environment
