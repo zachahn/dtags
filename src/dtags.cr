@@ -198,7 +198,7 @@ module Dtags
       @config_search_paths = [
         Path.new(".git", "dtags.yaml").expand,
         Path.new("dtags.yaml").expand,
-        Path.new(ENV.fetch("XDG_CONFIG_HOME", Path.home.join("config", "dtags", "dtags.yaml").to_s)).expand,
+        Path.new(ENV.fetch("XDG_CONFIG_HOME", Path.home.join(".config", "dtags", "dtags.yaml").to_s)).expand,
         Path.home.join(".dtags.yaml"),
       ]
       @delegatees = [] of String
@@ -252,6 +252,27 @@ module Dtags
         #{@config_search_paths.map { |path| "    --config=#{path}" }.join("\n")}
             --out=#{@result_path}
             --working=#{@working_path}
+
+        Config file:
+
+        The config file keeps track of runners (the commands that can be run
+        to generate tag files) and delegatees (the list of project-specific
+        runners).
+
+        Dtags reads from multiple configuration files at once and merges them.
+        It'll usually make sense to keep reusable runners separate from the
+        delegatees.
+
+            ---
+            runners:
+              ripper-exclude-vendor:
+                command:
+                  - ripper-tags
+                  - -R
+                  - --exclude=vendor
+                  - --tag-file=%{abspath}
+            delegate:
+              - ripper-exclude-vendor
         MORE
 
         parser.invalid_option do |flag|
