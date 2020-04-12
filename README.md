@@ -1,27 +1,77 @@
-# dtags
+# Dtags
 
-TODO: Write a description here
+**D**elegate C**tags**
+
+
+## Description
+
+Dtags delegates tag generation to language specific tools, then it merges all
+the results into one tag file.
+
+For example, on a project that uses both Haskell and Ruby, dtags could delegate
+tag generation to `hasktags` and `ripper-tags`, then generate a single merged
+`tags` file.
+
+Although ctags is very convenient, I've personally found that language specific
+tag generators are more accurate than ctags' parsers.
+
+Dtags can delegate to ctags.
+
 
 ## Installation
 
-TODO: Write installation instructions here
+```sh
+git clone https://github.com/zachahn/dtags
+crystal build --release src/dtags.cr
+mv dtags ~/.bin # for example
+```
+
 
 ## Usage
 
-TODO: Write usage instructions here
+```
+Usage: dtags [options]
 
-## Development
+Options:
+    --clear-config-paths             Empties the list of search paths. Should be called before `--config`
+    --config=FILE                    Prepend config search path
+    --delegatee=DELEGATEE            Name of runner to run. Overrides delegatees specified in config file
+    -o RESULT, --out=RESULT          Path to the final file
+    --working=PREFIX                 Path to intermediary tags
+    --version                        Print the following and quit: v0.0.0
+    -h, --help                       Show this help
 
-TODO: Write development instructions here
+Defaults: (compensating for the current working directory)
+    --config=current/working/dir/.git/dtags.yaml
+    --config=current/working/dir/dtags.yaml
+    --config=~/.config/dtags/dtags.yaml
+    --config=~/.dtags.yaml
+    --out=current/working/dir/tags
+    --working=current/working/dir/.dtags
 
-## Contributing
+Config file:
 
-1. Fork it (<https://github.com/your-github-user/dtags/fork>)
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create a new Pull Request
+The config file keeps track of runners (the commands that can be run
+to generate tag files) and delegatees (the list of project-specific
+runners).
 
-## Contributors
+Dtags reads from multiple configuration files at once and merges them.
+It'll usually make sense to keep reusable runners separate from the
+delegatees.
 
-- [Zach Ahn](https://github.com/your-github-user) - creator and maintainer
+    ---
+    runners:
+      ripper-exclude-vendor:
+        command:
+          - ripper-tags
+          - -R
+          - --exclude=vendor
+          - --tag-file=%{abspath}
+    delegate:
+      - ripper-exclude-vendor
+```
+
+
+## License
+
+Open source. MIT license. See [LICENSE](LICENSE).
