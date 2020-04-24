@@ -1,14 +1,22 @@
+require "random"
+require "log"
 require "option_parser"
 require "yaml"
 
 # TODO: Write documentation for `Dtags`
 module Dtags
   VERSION = "0.0.0"
+  Log = ::Log.for("Dtags", ::Log::Severity::Debug)
+  Log.backend = ::Log::IOBackend.new
+  Rand = Random.new
 
   alias ArgInterpolation = NamedTuple(abspath: String)
 
   class Runner
+    @identifier : String?
+
     def initialize(@command : Array(String))
+      Log.verbose { "#{identifier} Initialized command from config: #{@command}" }
     end
 
     def call(
@@ -16,45 +24,66 @@ module Dtags
       name : String,
       abspath : Path,
       args_interpolation : ArgInterpolation
-    )
+    ) : Nil
       cmd = @command.first
       args = @command[1..-1].map do |arg|
         arg % args_interpolation
       end
 
+      Log.verbose { "#{identifier} Args: #{args_interpolation}" }
+
       status = Process.run(cmd, args)
       channel.send({name, {abspath, status.exit_code}})
+      Log.verbose { "#{identifier} Completed successfully" }
     rescue
-      if File.exists?(abspath)
-        File.delete(abspath)
-      end
-
       channel.send({name, {abspath, -1}})
+      Log.verbose { "#{identifier} Failed" }
+    end
+
+    private def identifier : String
+      @identifier ||= Rand.hex(8)
     end
   end
 
   class Main
-    def call(environment : Environment)
+    def call(environment : Environment) : Nil
       pid = Process.pid
       prefix_path = "#{environment.working_path}-#{pid}"
+      Log.verbose { "Starting! pid: #{pid}, prefix: #{prefix_path}" }
 
       paths_and_exit_codes =
-        run_runners(environment.delegatees, environment.runners, prefix_path)
-      combine(paths_and_exit_codes, environment.result_path, prefix_path)
-      clean(paths_and_exit_codes)
+        ::Log.with_context do
+          Log.context.set(step: "running runners")
+          run_runners(environment.delegatees, environment.runners, prefix_path)
+        end
+      ::Log.with_context do
+        Log.context.set(step: "combining results")
+        combine(paths_and_exit_codes, environment.result_path, prefix_path)
+      end
+      ::Log.with_context do
+        Log.context.set(step: "cleaning")
+        clean(paths_and_exit_codes)
+      end
     end
 
-    private def clean(paths_and_exit_codes)
+    private def clean(paths_and_exit_codes) : Nil
       paths_and_exit_codes.each do |path, _exit_code|
+        Log.verbose { "Attempting to delete file: #{path}" }
         if File.exists?(path)
+          Log.verbose { "File exists, deleting: #{path}" }
           File.delete(path)
         end
       end
     end
 
-    private def combine(all_paths_and_exit_codes, output_path, tmp_path)
-      paths_and_exit_codes = all_paths_and_exit_codes.select do |_input_path, exit_code|
-        exit_code == 0
+    private def combine(all_paths_and_exit_codes, output_path, tmp_path) : Nil
+      paths_and_exit_codes = all_paths_and_exit_codes.select do |input_path, exit_code|
+        if exit_code != 0
+          Log.verbose { "Runner returned error code #{exit_code} - ignoring #{input_path}" }
+          next false
+        end
+
+        true
       end
 
       new_lines = paths_and_exit_codes.flat_map do |input_path, _exit_code|
@@ -74,7 +103,9 @@ module Dtags
         %(!_TAG_PROGRAM_VERSION	#{Dtags::VERSION}	//),
       ]
 
+      Log.verbose { "Writing merged output to: #{tmp_path}" }
       File.write(tmp_path, (headers + new_lines.sort).join("\n") + "\n")
+      Log.verbose { "Renaming merged output to: #{output_path}" }
       File.rename(tmp_path, output_path.to_s)
     end
 
@@ -84,8 +115,12 @@ module Dtags
       existing_delegatees = delegatees.compact_map do |delegatee|
         next delegatee if runners.has_key?(delegatee)
 
-        puts "Couldn't find a runner named: #{delegatee}"
+        Log.error { "Couldn't find a runner named: #{delegatee}" }
+
+        nil
       end
+
+      Log.verbose { "Delegatees: #{existing_delegatees}" }
 
       existing_delegatees.each_with_index do |delegatee, i|
         runner = runners[delegatee]
@@ -99,10 +134,11 @@ module Dtags
         end
       end
 
-      results = existing_delegatees.size.times.map { channel.receive }.to_h
+      results = existing_delegatees.size.times.map { channel.receive.last }.to_a
 
-      # sort results
-      existing_delegatees.map { |delegatee| results[delegatee] }
+      Log.verbose { "#{results}" }
+
+      results
     end
   end
 
@@ -193,6 +229,7 @@ module Dtags
     @parser : OptionParser
     @result_path : Path
     @working_path : Path
+    @verbosity : Int32
 
     def initialize
       @config_search_paths = [
@@ -204,11 +241,20 @@ module Dtags
       @delegatees = [] of String
       @result_path = Path["."].expand.join("tags").normalize
       @working_path = Path["."].expand.join(".dtags").normalize
+      @verbosity = ::Log::Severity::Error.value.to_i
       @parser = initialize_parser
     end
 
     def parse(argv)
       @parser.parse(argv)
+      Log.level =
+        if @verbosity > ::Log::Severity::None.value
+          ::Log::Severity::None
+        elsif @verbosity < ::Log::Severity::Debug.value
+          ::Log::Severity::Debug
+        else
+          ::Log::Severity.from_value(@verbosity)
+        end
 
       Environment::FromFile.new(
         config_search_paths: @config_search_paths,
@@ -241,6 +287,9 @@ module Dtags
         parser.on("--version", "Print the following and quit: v#{Dtags::VERSION}") do
           puts("v#{Dtags::VERSION}")
           exit
+        end
+        parser.on("-v", "--verbose", "Increase verbosity") do
+          @verbosity -= 1
         end
         parser.on("-h", "--help", "Show this help") do
           puts(parser)
