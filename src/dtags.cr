@@ -120,6 +120,8 @@ module Dtags
         nil
       end
 
+      existing_delegatees = existing_delegatees.uniq
+
       Log.verbose { "Delegatees: #{existing_delegatees}" }
 
       existing_delegatees.each_with_index do |delegatee, i|
