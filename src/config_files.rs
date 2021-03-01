@@ -7,18 +7,18 @@ use std::process;
 use yaml_rust::YamlLoader;
 
 #[derive(Debug)]
-pub struct Runners {
-    registry: HashMap<String, Vec<String>>,
+pub struct ConfigFiles {
+    runner_registry: HashMap<String, Vec<String>>,
 }
 
-impl Runners {
-    pub fn new(config_paths: &Vec<String>) -> Runners {
-        let mut instance = Runners {
-            registry: HashMap::new(),
+impl ConfigFiles {
+    pub fn new(config_paths: &Vec<String>) -> ConfigFiles {
+        let mut instance = ConfigFiles {
+            runner_registry: HashMap::new(),
         };
 
         for config_path in config_paths.iter() {
-            match extract_runners(config_path, &mut instance.registry) {
+            match extract_runners(config_path, &mut instance.runner_registry) {
                 Ok(_) => {}
                 Err(_) => {}
             }
@@ -31,15 +31,15 @@ impl Runners {
         &self,
         name: &String,
     ) -> Result<Result<process::Child, std::io::Error>, Box<dyn Error>> {
-        if !self.registry.contains_key(name) {
+        if !self.runner_registry.contains_key(name) {
             return Err(Box::new(error::DtagError {}));
         }
 
-        if self.registry[name].len() < 2 {
+        if self.runner_registry[name].len() < 2 {
             return Err(Box::new(error::DtagError {}));
         }
 
-        let (head, tail) = self.registry[name].split_at(1);
+        let (head, tail) = self.runner_registry[name].split_at(1);
         return Ok(process::Command::new(head[0].as_str())
             .args(&tail[..])
             .spawn());
@@ -48,7 +48,7 @@ impl Runners {
 
 fn extract_runners(
     path: &String,
-    registry: &mut HashMap<String, Vec<String>>,
+    runner_registry: &mut HashMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(path)?;
     let docs = YamlLoader::load_from_str(contents.as_str())?;
@@ -70,7 +70,7 @@ fn extract_runners(
                         continue 'outer;
                     }
                 }
-                registry.insert(name.to_string(), args);
+                runner_registry.insert(name.to_string(), args);
             }
         }
     }

@@ -1,9 +1,9 @@
 extern crate yaml_rust;
 
 mod cli;
+mod config_files;
 mod error;
 mod opts;
-mod runners;
 
 fn main() {
     println!("Hello, world!");
@@ -12,6 +12,6 @@ fn main() {
     println!("{:?}", matches);
     let opts = opts::Opts::new(matches);
     println!("{:?}", opts);
-    let runners = runners::Runners::new(&opts.config_paths);
-    println!("{:?}", runners);
+    let config_files = config_files::ConfigFiles::new(&opts.config_paths);
+    println!("{:?}", config_files);
 }
