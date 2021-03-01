@@ -20,13 +20,17 @@ impl Opts {
         if !matches.opt_present("clear-config-paths") {
             instance.config_paths.push(".git/dtags.yaml".to_string());
             instance.config_paths.push("dtags.yaml".to_string());
-            instance.config_paths
+            instance
+                .config_paths
                 .push("~/.config/dtags/dtags.yaml".to_string());
             instance.config_paths.push("~/.dtags.yaml".to_string());
         }
 
-        instance.config_paths.append(&mut matches.opt_strs("config"));
-        instance.delegatee_names
+        instance
+            .config_paths
+            .append(&mut matches.opt_strs("config"));
+        instance
+            .delegatee_names
             .append(&mut matches.opt_strs("delegatee"));
 
         match matches.opt_str("out") {
