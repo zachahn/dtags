@@ -18,10 +18,7 @@ impl ConfigFiles {
         };
 
         for config_path in config_paths.iter() {
-            match extract_runners(config_path, &mut instance.runner_registry) {
-                Ok(_) => {}
-                Err(_) => {}
-            }
+            let _ = extract_runners(config_path, &mut instance.runner_registry);
         }
 
         return instance;
