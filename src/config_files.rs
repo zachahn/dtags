@@ -4,20 +4,23 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::process;
-use yaml_rust::YamlLoader;
+use yaml_rust::{Yaml, YamlLoader};
 
 #[derive(Debug)]
 pub struct ConfigFiles {
     runner_registry: HashMap<String, Vec<String>>,
+    yaml_registry: HashMap<String, Yaml>,
 }
 
 impl ConfigFiles {
     pub fn new(config_paths: &Vec<String>) -> ConfigFiles {
         let mut instance = ConfigFiles {
             runner_registry: HashMap::new(),
+            yaml_registry: HashMap::new(),
         };
 
         for config_path in config_paths.iter() {
+            let _ = parse_config_files(config_path, &mut instance.yaml_registry);
             let _ = extract_runners(config_path, &mut instance.runner_registry);
         }
 
@@ -41,6 +44,21 @@ impl ConfigFiles {
             .args(&tail[..])
             .spawn());
     }
+}
+
+fn parse_config_files(
+    path: &String,
+    yaml_registry: &mut HashMap<String, Yaml>,
+) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let docs = YamlLoader::load_from_str(contents.as_str())?;
+
+    match docs.into_iter().nth(0) {
+        Some(doc) => { yaml_registry.insert(path.to_string(), doc); },
+        None => {},
+    }
+
+    return Ok(());
 }
 
 fn extract_runners(
