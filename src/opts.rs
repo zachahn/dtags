@@ -1,10 +1,10 @@
 #[derive(Debug)]
 pub struct Opts {
-    config_paths: Vec<String>,
-    delegatee_names: Vec<String>,
-    output_path: String,
-    working_dir: String,
-    timeout: f32,
+    pub config_paths: Vec<String>,
+    pub delegatee_names: Vec<String>,
+    pub output_path: String,
+    pub working_dir: String,
+    pub timeout: f32,
 }
 
 impl Opts {
