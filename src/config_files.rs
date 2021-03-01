@@ -21,7 +21,7 @@ impl ConfigFiles {
 
         for config_path in config_paths.iter() {
             let _ = parse_config_files(config_path, &mut instance.yaml_registry);
-            let _ = extract_runners(config_path, &mut instance.runner_registry);
+            let _ = extract_runners(config_path, &instance.yaml_registry, &mut instance.runner_registry);
         }
 
         return instance;
@@ -63,12 +63,14 @@ fn parse_config_files(
 
 fn extract_runners(
     path: &String,
+    yaml_registry: &HashMap<String, Yaml>,
     runner_registry: &mut HashMap<String, Vec<String>>,
 ) -> Result<(), Box<dyn Error>> {
-    let contents = fs::read_to_string(path)?;
-    let docs = YamlLoader::load_from_str(contents.as_str())?;
-    let doc = &docs[0];
+    if !yaml_registry.contains_key(path) {
+        return Err(Box::new(error::DtagError {}));
+    }
 
+    let doc = &yaml_registry[path];
     let runners = doc["runners"]
         .as_hash()
         .ok_or_else(|| YamlLoader::load_from_str("{}").unwrap())
