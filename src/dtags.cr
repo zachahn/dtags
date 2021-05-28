@@ -16,7 +16,7 @@ module Dtags
     @identifier : String?
 
     def initialize(@command : Array(String))
-      Log.verbose { "#{identifier} Initialized command from config: #{@command}" }
+      Log.trace { "#{identifier} Initialized command from config: #{@command}" }
     end
 
     def call(
@@ -30,14 +30,14 @@ module Dtags
         arg % args_interpolation
       end
 
-      Log.verbose { "#{identifier} Args: #{args_interpolation}" }
+      Log.trace { "#{identifier} Args: #{args_interpolation}" }
 
       status = Process.run(cmd, args)
       channel.send({name, {abspath, status.exit_code}})
-      Log.verbose { "#{identifier} Completed successfully" }
+      Log.trace { "#{identifier} Completed successfully" }
     rescue
       channel.send({name, {abspath, -1}})
-      Log.verbose { "#{identifier} Failed" }
+      Log.trace { "#{identifier} Failed" }
     end
 
     private def identifier : String
@@ -49,7 +49,7 @@ module Dtags
     def call(environment : Environment) : Nil
       pid = Process.pid
       prefix_path = "#{environment.working_path}-#{pid}"
-      Log.verbose { "Starting! pid: #{pid}, prefix: #{prefix_path}" }
+      Log.trace { "Starting! pid: #{pid}, prefix: #{prefix_path}" }
 
       paths_and_exit_codes =
         ::Log.with_context do
@@ -68,9 +68,9 @@ module Dtags
 
     private def clean(paths_and_exit_codes) : Nil
       paths_and_exit_codes.each do |path, _exit_code|
-        Log.verbose { "Attempting to delete file: #{path}" }
+        Log.trace { "Attempting to delete file: #{path}" }
         if File.exists?(path)
-          Log.verbose { "File exists, deleting: #{path}" }
+          Log.trace { "File exists, deleting: #{path}" }
           File.delete(path)
         end
       end
@@ -79,7 +79,7 @@ module Dtags
     private def combine(all_paths_and_exit_codes, output_path, tmp_path) : Nil
       paths_and_exit_codes = all_paths_and_exit_codes.select do |input_path, exit_code|
         if exit_code != 0
-          Log.verbose { "Runner returned error code #{exit_code} - ignoring #{input_path}" }
+          Log.trace { "Runner returned error code #{exit_code} - ignoring #{input_path}" }
           next false
         end
 
@@ -103,9 +103,9 @@ module Dtags
         %(!_TAG_PROGRAM_VERSION	#{Dtags::VERSION}	//),
       ]
 
-      Log.verbose { "Writing merged output to: #{tmp_path}" }
+      Log.trace { "Writing merged output to: #{tmp_path}" }
       File.write(tmp_path, (headers + new_lines.sort).join("\n") + "\n")
-      Log.verbose { "Renaming merged output to: #{output_path}" }
+      Log.trace { "Renaming merged output to: #{output_path}" }
       File.rename(tmp_path, output_path.to_s)
     end
 
@@ -122,7 +122,7 @@ module Dtags
 
       existing_delegatees = existing_delegatees.uniq
 
-      Log.verbose { "Delegatees: #{existing_delegatees}" }
+      Log.trace { "Delegatees: #{existing_delegatees}" }
 
       existing_delegatees.each_with_index do |delegatee, i|
         runner = runners[delegatee]
@@ -138,7 +138,7 @@ module Dtags
 
       results = existing_delegatees.size.times.map { channel.receive.last }.to_a
 
-      Log.verbose { "#{results}" }
+      Log.trace { "#{results}" }
 
       results
     end
