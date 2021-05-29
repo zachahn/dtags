@@ -249,14 +249,9 @@ module Dtags
 
     def parse(argv)
       @parser.parse(argv)
-      Log.level =
-        if @verbosity > ::Log::Severity::None.value
-          ::Log::Severity::None
-        elsif @verbosity < ::Log::Severity::Debug.value
-          ::Log::Severity::Debug
-        else
-          ::Log::Severity.from_value(@verbosity)
-        end
+      severities = ::Log::Severity.values.map { |severity| severity.value }.sort
+      @verbosity = @verbosity.clamp(severities.first, severities.last)
+      Log.level = ::Log::Severity.from_value(@verbosity)
 
       Environment::FromFile.new(
         config_search_paths: @config_search_paths,
