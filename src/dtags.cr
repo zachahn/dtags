@@ -52,15 +52,15 @@ module Dtags
       Log.trace { "Starting! pid: #{pid}, prefix: #{prefix_path}" }
 
       paths_and_exit_codes =
-        ::Log.with_context do
+        Log.with_context do
           Log.context.set(step: "running runners")
           run_runners(environment.delegatees, environment.runners, prefix_path)
         end
-      ::Log.with_context do
+      Log.with_context do
         Log.context.set(step: "combining results")
         combine(paths_and_exit_codes, environment.result_path, prefix_path)
       end
-      ::Log.with_context do
+      Log.with_context do
         Log.context.set(step: "cleaning")
         clean(paths_and_exit_codes)
       end
